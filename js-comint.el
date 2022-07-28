@@ -439,5 +439,122 @@ If no region selected, you could manually input javascript expression."
   (use-local-map js-comint-mode-map)
   (ansi-color-for-comint-mode-on))
 
+
+(defun jb/send-line-js ()
+  "If the line starts with `const' or `let', then remove that
+before sending to comint."
+  (interactive)
+  (save-mark-and-excursion
+    (beginning-of-line)
+    (back-to-indentation)
+    (let ((start (point)))
+      (end-of-line)
+      (let ((str (buffer-substring start (point))))
+	(setq str (jb/remove-let-and-const str))
+	(js-comint-send-string str))))
+  (next-line))
+
+(defun jb/remove-let-and-const (str)
+  ;; should filter off any white space here
+  (if (string-prefix-p "let" str)
+      (substring str 3)
+    (if (string-prefix-p "const" str)
+	(substring str 5)
+      str)))
+
+(defun jb/send-region-filter-for-let-and-const ()
+  (interactive)
+  (unless (not (region-active-p))
+    (if (< (abs (- (point) (mark))) 50)
+	(js-comint-send-region)
+      (progn
+	(if (> (point) (mark))
+	    (exchange-point-and-mark))
+	(while (< (point) (mark))
+	  (jb/send-line-js))))))   ; note that jb/send-line-js-comint moves point
+
+(defun jb/send-defun-js ()
+  "Assumes that js2-mode is available."  
+  (interactive)
+  (save-mark-and-excursion
+    (save-restriction
+      (org-narrow-to-block)
+      (js2-init-scanner)
+      (js2-do-parse)
+      (js2-mark-defun)
+      (let ((str (buffer-substring (point) (mark))))
+	(js-comint-send-string str))))
+  (next-line))
+
+;; (defun jb/send-sexp-js-comint ()
+;;   "Assumes that js2-mode is available."  
+;;   (interactive)
+;;   (save-mark-and-excursion
+;;     (save-restriction
+;;       (org-narrow-to-block)
+;;       (js2-init-scanner)
+;;       (js2-do-parse)
+;;       (js2-mode-forward-sexp -1)
+;;       (let ((start (point)))
+;; 	(js2-mode-forward-sexp)
+;; 	(let ((end (point)))
+;; 	  (js-comint-send-string (buffer-substring-no-properties (start) (end))))))))
+
+(defun jb/send-src-block-js ()
+  (interactive)
+                                        ;(unless (string= (jb/get-src-block-header-arg :tangle) "no")
+  (if (region-active-p)
+      (jb/send-region-filter-for-let-and-const)
+    (unless (not (org-in-src-block-p))
+      (save-mark-and-excursion
+	(jb/mark-inside-of-org-code-block)
+	(js-comint-send-region)))))
+
+(defun jb/send-all-src-blocks-in-entry-js ()
+  (interactive)
+  (save-excursion
+    (save-restriction
+      (unless (org-at-heading-p)
+	(org-back-to-heading))
+      (org-narrow-to-element)
+      (org-block-map
+       ;; ; org-block-map only puts point on head, but need it in block
+       (lambda ()
+	 (interactive)
+	 (end-of-line) 
+	 (jb/send-src-block-js))))))
+
+(defun jb/send-all-src-blocks-in-file-js ()
+  (interactive)
+  (org-block-map (lambda ()
+	           (interactive)
+	           (end-of-line) 
+	           (jb/send-src-block-js))))
+
+(defun jb/open-link-and-send-all-blocks-in-file-js ()
+  (interactive)
+  (when (org-in-regexp org-link-bracket-re 1)
+    (let* ((link (match-string-no-properties 1))
+	   (id (substring link 3)))
+      (save-window-excursion
+	(let ((m (org-id-find id 'marker)))
+	  (switch-to-buffer (marker-buffer m))
+	  (jb/send-all-src-blocks-in-file-js))))))
+
+(defun jb/general-send-js ()
+  (interactive)
+  (save-match-data
+    (if (org-in-src-block-p)
+	(jb/send-src-block-js)
+      (if (org-in-regexp org-link-bracket-re 1)
+	  (jb/open-link-and-send-all-blocks-in-file-js)
+	(jb/send-src-blocks-in-entry-js)))))
+
+(defun jb/print-js-comint ()
+  (interactive)
+  (js-comint-send-string "pp()\n"))
+
+
 (provide 'js-comint)
 ;;; js-comint.el ends here
+
